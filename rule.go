@@ -135,11 +135,11 @@ func (r *Rule[T]) validateTest(ctx context.Context, value T) *Result {
 
 func (r *Rule[T]) validateAll(ctx context.Context, value T) *Result {
 	children := make([]*Result, len(r.Children))
-	
+
 	for i, child := range r.Children {
 		childResult := child.validateRecursive(ctx, value)
 		children[i] = childResult
-		
+
 		// Short-circuit on first failure
 		if childResult.Status == StatusFail {
 			// Mark remaining children as skipped
@@ -158,7 +158,7 @@ func (r *Rule[T]) validateAll(ctx context.Context, value T) *Result {
 			}
 		}
 	}
-	
+
 	return &Result{
 		Status:   StatusPass,
 		Label:    r.Label,
@@ -169,11 +169,11 @@ func (r *Rule[T]) validateAll(ctx context.Context, value T) *Result {
 
 func (r *Rule[T]) validateAny(ctx context.Context, value T) *Result {
 	children := make([]*Result, len(r.Children))
-	
+
 	for i, child := range r.Children {
 		childResult := child.validateRecursive(ctx, value)
 		children[i] = childResult
-		
+
 		// Short-circuit on first success
 		if childResult.Status == StatusPass {
 			// Mark remaining children as skipped
@@ -192,7 +192,7 @@ func (r *Rule[T]) validateAny(ctx context.Context, value T) *Result {
 			}
 		}
 	}
-	
+
 	return &Result{
 		Status:   StatusFail,
 		Label:    r.Label,
@@ -210,9 +210,9 @@ func (r *Rule[T]) validateNot(ctx context.Context, value T) *Result {
 			Message: "not rule must have exactly one child",
 		}
 	}
-	
+
 	childResult := r.Children[0].validateRecursive(ctx, value)
-	
+
 	// Invert the result
 	var status ResultStatus
 	var message string
@@ -224,7 +224,7 @@ func (r *Rule[T]) validateNot(ctx context.Context, value T) *Result {
 	} else {
 		status = StatusSkip
 	}
-	
+
 	return &Result{
 		Status:   status,
 		Label:    r.Label,
@@ -275,7 +275,7 @@ func OneOf[T any](rules ...*Rule[T]) *Rule[T] {
 	return Test("one-of", func(ctx context.Context, value T) error {
 		passCount := 0
 		var lastError error
-		
+
 		for _, rule := range rules {
 			result, _ := rule.Validate(ctx, value)
 			if result.OK() {
@@ -284,7 +284,7 @@ func OneOf[T any](rules ...*Rule[T]) *Rule[T] {
 				lastError = errors.New(result.Message)
 			}
 		}
-		
+
 		if passCount == 0 {
 			return fmt.Errorf("none of the rules passed: %v", lastError)
 		} else if passCount > 1 {
@@ -298,20 +298,24 @@ func OneOf[T any](rules ...*Rule[T]) *Rule[T] {
 func AtLeastN[T any](n int, rules ...*Rule[T]) *Rule[T] {
 	return Test(fmt.Sprintf("at-least-%d", n), func(ctx context.Context, value T) error {
 		passCount := 0
-		
+
 		for _, rule := range rules {
 			result, _ := rule.Validate(ctx, value)
 			if result.OK() {
 				passCount++
 			}
 		}
-		
+
 		if passCount < n {
 			return fmt.Errorf("only %d rules passed (expected at least %d)", passCount, n)
 		}
 		return nil
 	})
 }
+
+// ----------------
+// PREDEFINED RULES
+// ----------------
 
 // StringLength creates a rule for string length validation
 func StringLength(min, max int) *Rule[string] {
@@ -327,18 +331,27 @@ func StringLength(min, max int) *Rule[string] {
 	})
 }
 
-// NotEmpty creates a rule that ensures a string is not empty
-func NotEmpty(label string) *Rule[string] {
-	return Test(label, func(ctx context.Context, value string) error {
-		if strings.TrimSpace(value) == "" {
+// StringEmpty creates a rule that ensures a string is not empty
+func StringEmpty() *Rule[string] {
+	return Test("not empty", func(ctx context.Context, value string) error {
+		if strings.TrimSpace(value) != "" {
 			return errors.New("string cannot be empty")
 		}
 		return nil
 	})
 }
 
+func StringContains(substring string) *Rule[string] {
+	return Test("string-contains \""+substring+"\"", func(ctx context.Context, value string) error {
+		if !strings.Contains(value, substring) {
+			return fmt.Errorf("string does not contain %s", substring)
+		}
+		return nil
+	})
+}
+
 // NumericRange creates a rule for numeric range validation
-func NumericRange[T int | int64 | float64](min, max T) *Rule[T] {
+func NumericRange[T int | int8 | int16| int64 | float64 | uint | uint8 | uint16 | uint32 | uint64](min, max T) *Rule[T] {
 	return Test("numeric-range", func(ctx context.Context, value T) error {
 		if value < min {
 			return fmt.Errorf("value too small (min: %v, got: %v)", min, value)
