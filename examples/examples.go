@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	ok "go_ok"
+	ok "gook"
 )
 
 // RunBasicExamples demonstrates basic validation features

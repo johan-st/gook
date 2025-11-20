@@ -1,4 +1,4 @@
-package go_ok
+package gook
 
 import (
 	"fmt"

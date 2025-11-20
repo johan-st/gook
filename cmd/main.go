@@ -2,7 +2,7 @@ package main
 
 import (
 	"flag"
-	"go_ok/examples"
+	"gook/examples"
 	"strings"
 )
 

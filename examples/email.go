@@ -3,7 +3,7 @@ package examples
 import (
 	"context"
 	"fmt"
-	ok "go_ok"
+	ok "gook"
 )
 
 func Email(testString string) {
