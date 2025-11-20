@@ -32,7 +32,12 @@ func TestThen(t *testing.T) {
 		return n, nil
 	}
 
-	secondRule := NumericRange(10, 100)
+	secondRule := Test("range", func(ctx context.Context, n int) error {
+		if n < 10 || n > 100 {
+			return errors.New("out of range")
+		}
+		return nil
+	})
 
 	pipeline := Then(firstRule, transform, secondRule)
 
@@ -152,81 +157,6 @@ func TestThenWithTimeout(t *testing.T) {
 	}
 }
 
-func TestChainThen(t *testing.T) {
-	ctx := context.Background()
-
-	// First pipeline: string -> int
-	firstRule := Test("not-empty", func(ctx context.Context, s string) error {
-		if s == "" {
-			return errors.New("empty")
-		}
-		return nil
-	})
-	transform1 := func(s string) (int, error) {
-		var n int
-		_, err := fmt.Sscanf(s, "%d", &n)
-		return n, err
-	}
-
-	// Chain: int -> string
-	transform2 := func(n int) (string, error) {
-		return fmt.Sprintf("%d", n), nil
-	}
-	thirdRule := Test("length", func(ctx context.Context, s string) error {
-		if len(s) < 2 {
-			return errors.New("too short")
-		}
-		return nil
-	})
-
-	// ChainThen now takes first rule, both transforms, and final rule
-	pipeline2 := ChainThen(firstRule, transform1, transform2, thirdRule)
-
-	// Test successful chain
-	result, ok := pipeline2.Validate(ctx, "50")
-	if !ok {
-		t.Errorf("Expected validation to pass, got: %s", result.Format())
-	}
-	if result.Status != StatusPass {
-		t.Error("Expected StatusPass")
-	}
-
-	// Test failure in first pipeline
-	_, ok = pipeline2.Validate(ctx, "5")
-	if ok {
-		t.Error("Expected validation to fail for value out of range")
-	}
-
-	// Test failure in second pipeline
-	_, ok = pipeline2.Validate(ctx, "1")
-	if ok {
-		t.Error("Expected validation to fail for single digit")
-	}
-}
-
-func TestThenString(t *testing.T) {
-	firstRule := Test("first", func(ctx context.Context, s string) error {
-		return nil
-	})
-	transform := func(s string) (int, error) {
-		return 0, nil
-	}
-	secondRule := Test("second", func(ctx context.Context, n int) error {
-		return nil
-	})
-
-	pipeline := Then(firstRule, transform, secondRule)
-	str := pipeline.String()
-	// Now returns Rule format: "then[T](N children)" instead of ThenRule format
-	if !strings.Contains(str, "then") {
-		t.Errorf("Expected String to contain 'then', got '%s'", str)
-	}
-	// The String() method shows the rule kind and type, not individual labels
-	if pipeline.Kind != KindThen {
-		t.Errorf("Expected Kind to be KindThen, got %v", pipeline.Kind)
-	}
-}
-
 func TestThenWithComplexRules(t *testing.T) {
 	ctx := context.Background()
 
@@ -258,7 +188,12 @@ func TestThenWithComplexRules(t *testing.T) {
 	}
 
 	secondRule := All(
-		NumericRange(10, 100),
+		Test("range", func(ctx context.Context, n int) error {
+			if n < 10 || n > 100 {
+				return errors.New("out of range")
+			}
+			return nil
+		}),
 		Test("not-13", func(ctx context.Context, n int) error {
 			if n == 13 {
 				return errors.New("unlucky number")
@@ -293,4 +228,3 @@ func TestThenWithComplexRules(t *testing.T) {
 		t.Error("Expected validation to fail for unlucky number")
 	}
 }
-

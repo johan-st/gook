@@ -23,11 +23,13 @@ func getRunFuncs() (map[string]func(string), []string) {
 	funcRunBasicExamples := func(string) { examples.RunBasicExamples() }
 	funcEmail := func(testString string) { examples.Email(testString) }
 	funcNumeric := func(testString string) { examples.Numeric(testString) }
+	funcWip := func(testString string) { examples.Wip(testString) }
 
 	runValues := map[string]func(string){
 		"basic": funcRunBasicExamples,
 		"email": funcEmail,
 		"num": funcNumeric,
+		"wip": funcWip,
 	}
 	keys := make([]string, 0, len(runValues))
 	for k := range runValues {

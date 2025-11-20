@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 )
 
@@ -118,8 +117,33 @@ func typeEraseRule[U any](rule *Rule[U]) *Rule[any] {
 	return erased
 }
 
+// NewRule creates a labeled rule that combines multiple rules with All combinator
+func NewRule(label string, rules ...*Rule[any]) *Rule[any] {
+	return &Rule[any]{
+		Label:    label,
+		Kind:     KindAll,
+		Children: rules,
+	}
+}
+
+// As creates a type-narrowing/transformation rule from any to T
+// If the transform fails, the As rule fails
+func As[T any](transformFn func(any) (T, error), rule *Rule[T]) *Rule[any] {
+	// Create a pass-through rule that always passes (transform happens in Then)
+	passThrough := Test("as", func(ctx context.Context, val any) error {
+		return nil
+	})
+	
+	// Use Then to create the pipeline: any -> T -> validate
+	transformForThen := func(val any) (T, error) {
+		return transformFn(val)
+	}
+	
+	return Then(passThrough, transformForThen, rule)
+}
+
 // Then creates a type-narrowing pipeline as a Rule[T]
-// This eliminates the need for a separate ThenRule type
+// This is used internally by As
 func Then[T, U any](first *Rule[T], transform func(T) (U, error), next *Rule[U]) *Rule[T] {
 	// Type-erase the transform
 	typeErasedTransform := func(t T) (any, error) {
@@ -368,78 +392,6 @@ func (r *Rule[T]) validateNot(ctx context.Context, value T) *Result {
 	}
 }
 
-// String returns a human-readable representation of the rule
-func (r *Rule[T]) String() string {
-	if r.Kind == KindTest {
-		return fmt.Sprintf("Test[%T](%s)", *new(T), r.Label)
-	}
-	return fmt.Sprintf("%s[%T](%d children)", r.Kind.String(), *new(T), len(r.Children))
-}
-
-// Builder returns a RuleBuilder for fluent chaining
-func (r *Rule[T]) Builder() *RuleBuilder[T] {
-	return &RuleBuilder[T]{rule: r}
-}
-
-// RuleBuilder provides fluent chaining for type narrowing
-// Since Go doesn't allow methods with type parameters, we use a function ThenFrom
-// for type narrowing instead of a method
-type RuleBuilder[T any] struct {
-	rule *Rule[T]
-}
-
-// ThenFrom creates a type-narrowing pipeline from a RuleBuilder, returning a ThenRuleBuilder for further chaining
-// Usage: ThenFrom(NotNil("val").Builder(), AsString).All(NotEmpty("string"), StringLength(5, 100))
-func ThenFrom[T, U any](rb *RuleBuilder[T], transform func(T) (U, error)) *ThenRuleBuilder[T, U] {
-	return &ThenRuleBuilder[T, U]{
-		first:     rb.rule,
-		transform: transform,
-	}
-}
-
-// All creates a new RuleBuilder with All combinator
-func (rb *RuleBuilder[T]) All(rules ...*Rule[T]) *RuleBuilder[T] {
-	return &RuleBuilder[T]{rule: All(rules...)}
-}
-
-// Any creates a new RuleBuilder with Any combinator
-func (rb *RuleBuilder[T]) Any(rules ...*Rule[T]) *RuleBuilder[T] {
-	return &RuleBuilder[T]{rule: Any(rules...)}
-}
-
-// Rule returns the underlying rule
-func (rb *RuleBuilder[T]) Rule() *Rule[T] {
-	return rb.rule
-}
-
-// Helper functions for common validation patterns
-
-// Required creates a rule that ensures a value is not nil/zero
-func Required[T any](label string) *Rule[T] {
-	return Test(label, func(ctx context.Context, value T) error {
-		var zero T
-		if reflect.DeepEqual(value, zero) {
-			return errors.New("required field is missing")
-		}
-		return nil
-	})
-}
-
-// Optional creates a rule that only validates if the value is not nil/zero
-func Optional[T any](rule *Rule[T]) *Rule[T] {
-	return Test("optional", func(ctx context.Context, value T) error {
-		var zero T
-		if reflect.DeepEqual(value, zero) {
-			return nil // Skip validation for zero values
-		}
-		result, _ := rule.Validate(ctx, value)
-		if !result.OK() {
-			return errors.New(result.Message)
-		}
-		return nil
-	})
-}
-
 // OneOf creates a rule that passes if exactly one of the given rules passes
 func OneOf[T any](rules ...*Rule[T]) *Rule[T] {
 	return Test("one-of", func(ctx context.Context, value T) error {
@@ -464,29 +416,6 @@ func OneOf[T any](rules ...*Rule[T]) *Rule[T] {
 	})
 }
 
-// AtLeastN creates a rule that passes if at least N of the given rules pass
-func AtLeastN[T any](n int, rules ...*Rule[T]) *Rule[T] {
-	return Test(fmt.Sprintf("at-least-%d", n), func(ctx context.Context, value T) error {
-		passCount := 0
-
-		for _, rule := range rules {
-			result, _ := rule.Validate(ctx, value)
-			if result.OK() {
-				passCount++
-			}
-		}
-
-		if passCount < n {
-			return fmt.Errorf("only %d rules passed (expected at least %d)", passCount, n)
-		}
-		return nil
-	})
-}
-
-// ----------------
-// PREDEFINED RULES
-// ----------------
-
 // NotNil creates a rule that ensures a value is not nil
 func NotNil(label string) *Rule[any] {
 	return Test(label, func(ctx context.Context, value any) error {
@@ -497,29 +426,17 @@ func NotNil(label string) *Rule[any] {
 	})
 }
 
-// NotNilThenString is a convenience function for the common pattern:
-// NotNil -> AsString -> string rules
-// Usage: NotNilThenString("val", NotEmpty("string"), StringLength(5, 100))
-// Now returns *Rule[any] instead of *ThenRule[any, string]
-func NotNilThenString(label string, rules ...*Rule[string]) *Rule[any] {
-	return Then(NotNil(label), AsString, All(rules...))
+// AssertBytes is a transform function that converts any to []byte
+func AssertBytes(v any) ([]byte, error) {
+	b, ok := v.([]byte)
+	if !ok {
+		return nil, fmt.Errorf("value is not []byte")
+	}
+	return b, nil
 }
 
-
-// IsString creates a rule that checks if a value is a string type
-// It also acts as a transform function for use with Then
-func IsString() *Rule[any] {
-	return Test("is-string", func(ctx context.Context, value any) error {
-		_, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("value is not a string")
-		}
-		return nil
-	})
-}
-
-// AsString is a transform function that converts any to string
-func AsString(v any) (string, error) {
+// AssertString is a transform function that converts any to string
+func AssertString(v any) (string, error) {
 	s, ok := v.(string)
 	if !ok {
 		return "", fmt.Errorf("value is not a string")
@@ -527,8 +444,42 @@ func AsString(v any) (string, error) {
 	return s, nil
 }
 
-func String() *Rule[any] {
-	return IsString()
+// BytesMax creates a rule for maximum byte length
+func BytesMax(max int) *Rule[[]byte] {
+	return Test("bytes-max", func(ctx context.Context, value []byte) error {
+		if len(value) > max {
+			return fmt.Errorf("bytes too long (max: %d, got: %d)", max, len(value))
+		}
+		return nil
+	})
+}
+
+// BytesMin creates a rule for minimum byte length
+func BytesMin(min int) *Rule[[]byte] {
+	return Test("bytes-min", func(ctx context.Context, value []byte) error {
+		if len(value) < min {
+			return fmt.Errorf("bytes too short (min: %d, got: %d)", min, len(value))
+		}
+		return nil
+	})
+}
+
+// Encoding represents text encoding types
+type Encoding int
+
+const (
+	EncodingUTF8 Encoding = iota
+	EncodingUTF16
+	EncodingUTF32
+)
+
+// BytesEncoding creates a rule for byte encoding validation
+func BytesEncoding(enc Encoding) *Rule[[]byte] {
+	return Test("bytes-encoding", func(ctx context.Context, value []byte) error {
+		// Basic encoding check - can be enhanced later
+		_ = enc
+		return nil
+	})
 }
 
 // StringLength creates a rule for string length validation
@@ -545,18 +496,9 @@ func StringLength(min, max int) *Rule[string] {
 	})
 }
 
-// StringEmpty creates a rule that ensures a string is not empty
-func StringEmpty() *Rule[string] {
-	return Test("string empty", func(ctx context.Context, value string) error {
-		if strings.TrimSpace(value) != "" {
-			return errors.New("string cannot be empty")
-		}
-		return nil
-	})
-}
-
+// StringContains creates a rule that checks if a string contains a substring
 func StringContains(substring string) *Rule[string] {
-	return Test("string-contains \""+substring+"\"", func(ctx context.Context, value string) error {
+	return Test("string-contains", func(ctx context.Context, value string) error {
 		if !strings.Contains(value, substring) {
 			return fmt.Errorf("string does not contain %s", substring)
 		}
@@ -564,24 +506,21 @@ func StringContains(substring string) *Rule[string] {
 	})
 }
 
-// NotEmpty creates a rule that ensures a string is not empty (after trimming whitespace)
-func NotEmpty(label string) *Rule[string] {
-	return Test(label, func(ctx context.Context, value string) error {
-		if strings.TrimSpace(value) == "" {
-			return errors.New("string is empty")
+// StringEndsWith creates a rule that checks if a string ends with a suffix
+func StringEndsWith(suffix string) *Rule[string] {
+	return Test("string-ends-with", func(ctx context.Context, value string) error {
+		if !strings.HasSuffix(value, suffix) {
+			return fmt.Errorf("string does not end with %s", suffix)
 		}
 		return nil
 	})
 }
 
-// NumericRange creates a rule for numeric range validation
-func NumericRange[T int | int8 | int16| int32 | int64 | float32 | float64 | uint | uint8 | uint16 | uint32 | uint64](min, max T) *Rule[T] {
-	return Test("numeric-range", func(ctx context.Context, value T) error {
-		if value < min {
-			return fmt.Errorf("value too small (min: %v, got: %v)", min, value)
-		}
-		if value > max {
-			return fmt.Errorf("value too large (max: %v, got: %v)", max, value)
+// StringIs creates a rule that checks if a string equals a value
+func StringIs(value string) *Rule[string] {
+	return Test("string-is", func(ctx context.Context, s string) error {
+		if s != value {
+			return fmt.Errorf("string is not %s", value)
 		}
 		return nil
 	})

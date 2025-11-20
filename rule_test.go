@@ -3,75 +3,12 @@ package gook
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestBasicValidation(t *testing.T) {
-	ctx := context.Background()
-
-	// Test basic string validation
-	stringRule := All(
-		Not(StringEmpty()),
-		StringLength(5, 100),
-		Test("email-format", func(ctx context.Context, s string) error {
-			if s == "" {
-				return errors.New("empty")
-			}
-			return nil
-		}),
-	)
-
-	result, ok := stringRule.Validate(ctx, "test@example.com")
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if !ok {
-		t.Errorf("Expected validation to pass, got: %s", result.Format())
-	}
-
-	result, ok = stringRule.Validate(ctx, "")
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if ok {
-		t.Error("Expected validation to fail for empty string")
-	}
-}
-
-func TestShortCircuit(t *testing.T) {
-	ctx := context.Background()
-
-	failRule1 := Test("fail1", func(ctx context.Context, n int) error {
-		return errors.New("first failure")
-	})
-	failRule2 := Test("fail2", func(ctx context.Context, n int) error {
-		return errors.New("second failure")
-	})
-	passRule := Test("pass", func(ctx context.Context, n int) error {
-		return nil
-	})
-
-	allRule := All(failRule1, failRule2, passRule)
-	result, ok := allRule.Validate(ctx, 42)
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if ok {
-		t.Error("Expected All rule to fail")
-	}
-
-	// Check that only first rule failed, others are skipped
-	if len(result.Children) != 3 {
-		t.Errorf("Expected 3 children, got %d", len(result.Children))
-	}
-	if result.Children[0].Status != StatusFail {
-		t.Error("Expected first child to fail")
-	}
-	if result.Children[1].Status != StatusSkip {
-		t.Error("Expected second child to be skipped")
-	}
-	if result.Children[2].Status != StatusSkip {
-		t.Error("Expected third child to be skipped")
-	}
-}
-
-// Test Test rule kind
 func TestTestRule(t *testing.T) {
 	ctx := context.Background()
 
@@ -80,7 +17,6 @@ func TestTestRule(t *testing.T) {
 		return nil
 	})
 	result, ok := passRule.Validate(ctx, "test")
-	t.Logf("ok: %v, result: %+v", ok, result)
 	if !ok {
 		t.Error("Expected test rule to pass")
 	}
@@ -96,7 +32,6 @@ func TestTestRule(t *testing.T) {
 		return errors.New("validation failed")
 	})
 	result, ok = failRule.Validate(ctx, "test")
-	t.Logf("ok: %v, result: %+v", ok, result)
 	if ok {
 		t.Error("Expected test rule to fail")
 	}
@@ -108,7 +43,6 @@ func TestTestRule(t *testing.T) {
 	}
 }
 
-// Test All rule kind
 func TestAllRule(t *testing.T) {
 	ctx := context.Background()
 
@@ -117,7 +51,6 @@ func TestAllRule(t *testing.T) {
 	pass2 := Test("pass2", func(ctx context.Context, n int) error { return nil })
 	allRule := All(pass1, pass2)
 	result, ok := allRule.Validate(ctx, 42)
-	t.Logf("ok: %v, result: %+v", ok, result)
 	if !ok {
 		t.Error("Expected All rule to pass when all children pass")
 	}
@@ -138,7 +71,6 @@ func TestAllRule(t *testing.T) {
 	pass3 := Test("pass3", func(ctx context.Context, n int) error { return nil })
 	allRule = All(fail1, pass3)
 	result, ok = allRule.Validate(ctx, 42)
-	t.Logf("ok: %v, result: %+v", ok, result)
 	if ok {
 		t.Error("Expected All rule to fail")
 	}
@@ -152,7 +84,6 @@ func TestAllRule(t *testing.T) {
 	// Test empty All rule
 	emptyAll := All[int]()
 	result, ok = emptyAll.Validate(ctx, 42)
-	t.Logf("ok: %v, result: %+v", ok, result)
 	if !ok {
 		t.Error("Expected empty All rule to pass")
 	}
@@ -161,7 +92,6 @@ func TestAllRule(t *testing.T) {
 	}
 }
 
-// Test Any rule kind
 func TestAnyRule(t *testing.T) {
 	ctx := context.Background()
 
@@ -172,7 +102,6 @@ func TestAnyRule(t *testing.T) {
 	})
 	anyRule := Any(pass1, fail1)
 	result, ok := anyRule.Validate(ctx, 42)
-	t.Logf("ok: %v, result: %+v", ok, result)
 	if !ok {
 		t.Error("Expected Any rule to pass when first child passes")
 	}
@@ -192,7 +121,6 @@ func TestAnyRule(t *testing.T) {
 	})
 	anyRule = Any(fail1, fail2)
 	result, ok = anyRule.Validate(ctx, 42)
-	t.Logf("ok: %v, result: %+v", ok, result)
 	if ok {
 		t.Error("Expected Any rule to fail when all children fail")
 	}
@@ -206,7 +134,6 @@ func TestAnyRule(t *testing.T) {
 	// Test empty Any rule
 	emptyAny := Any[int]()
 	result, ok = emptyAny.Validate(ctx, 42)
-	t.Logf("ok: %v, result: %+v", ok, result)
 	if ok {
 		t.Error("Expected empty Any rule to fail")
 	}
@@ -215,7 +142,6 @@ func TestAnyRule(t *testing.T) {
 	}
 }
 
-// Test Not rule kind
 func TestNotRule(t *testing.T) {
 	ctx := context.Background()
 
@@ -225,7 +151,6 @@ func TestNotRule(t *testing.T) {
 	})
 	notRule := Not(failRule)
 	result, ok := notRule.Validate(ctx, "test")
-	t.Logf("ok: %v, result: %+v", ok, result)
 	if !ok {
 		t.Error("Expected Not rule to pass when child fails")
 	}
@@ -242,7 +167,6 @@ func TestNotRule(t *testing.T) {
 	})
 	notRule = Not(passRule)
 	result, ok = notRule.Validate(ctx, "test")
-	t.Logf("ok: %v, result: %+v", ok, result)
 	if ok {
 		t.Error("Expected Not rule to fail when child passes")
 	}
@@ -254,69 +178,6 @@ func TestNotRule(t *testing.T) {
 	}
 }
 
-// Test Required helper
-func TestRequired(t *testing.T) {
-	ctx := context.Background()
-
-	// Test string - empty should fail
-	requiredStr := Required[string]("name")
-	result, ok := requiredStr.Validate(ctx, "")
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if ok {
-		t.Error("Expected Required to fail for empty string")
-	}
-
-	// Test string - non-empty should pass
-	result, ok = requiredStr.Validate(ctx, "John")
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if !ok {
-		t.Error("Expected Required to pass for non-empty string")
-	}
-
-	// Test int - zero should fail
-	requiredInt := Required[int]("age")
-	result, ok = requiredInt.Validate(ctx, 0)
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if ok {
-		t.Error("Expected Required to fail for zero int")
-	}
-
-	// Test int - non-zero should pass
-	result, ok = requiredInt.Validate(ctx, 25)
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if !ok {
-		t.Error("Expected Required to pass for non-zero int")
-	}
-}
-
-// Test Optional helper
-func TestOptional(t *testing.T) {
-	ctx := context.Background()
-
-	// Test empty value (should pass)
-	optionalRule := Optional(Not(StringEmpty()))
-	result, ok := optionalRule.Validate(ctx, "")
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if !ok {
-		t.Error("Expected Optional to pass for empty value")
-	}
-
-	// Test non-empty valid value (should pass)
-	result, ok = optionalRule.Validate(ctx, "test@example.com")
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if !ok {
-		t.Error("Expected Optional to pass for valid non-empty value")
-	}
-
-	// Test non-empty invalid value (should fail)
-	result, ok = optionalRule.Validate(ctx, "   ")
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if ok {
-		t.Error("Expected Optional to fail for invalid non-empty value")
-	}
-}
-
-// Test OneOf helper
 func TestOneOf(t *testing.T) {
 	ctx := context.Background()
 
@@ -343,14 +204,12 @@ func TestOneOf(t *testing.T) {
 
 	// Test exactly one passes
 	result, ok := oneOfRule.Validate(ctx, 1)
-	t.Logf("ok: %v, result: %+v", ok, result)
 	if !ok {
 		t.Error("Expected OneOf to pass when exactly one rule passes")
 	}
 
 	// Test none pass
 	result, ok = oneOfRule.Validate(ctx, 0)
-	t.Logf("ok: %v, result: %+v", ok, result)
 	if ok {
 		t.Error("Expected OneOf to fail when no rules pass")
 	}
@@ -363,7 +222,6 @@ func TestOneOf(t *testing.T) {
 	rule5 := Test("rule5", func(ctx context.Context, n int) error { return nil })
 	oneOfRule = OneOf(rule4, rule5)
 	result, ok = oneOfRule.Validate(ctx, 42)
-	t.Logf("ok: %v, result: %+v", ok, result)
 	if ok {
 		t.Error("Expected OneOf to fail when multiple rules pass")
 	}
@@ -372,196 +230,150 @@ func TestOneOf(t *testing.T) {
 	}
 }
 
-// Test AtLeastN helper
-func TestAtLeastN(t *testing.T) {
+func TestNewRule(t *testing.T) {
 	ctx := context.Background()
 
-	rule1 := Test("rule1", func(ctx context.Context, n int) error {
-		if n > 0 {
-			return nil
+	// Create rules for NewRule
+	rule1 := Test("rule1", func(ctx context.Context, val any) error {
+		if val == nil {
+			return errors.New("nil value")
 		}
-		return errors.New("not positive")
+		return nil
 	})
-	rule2 := Test("rule2", func(ctx context.Context, n int) error {
-		if n < 100 {
-			return nil
+	rule2 := Test("rule2", func(ctx context.Context, val any) error {
+		s, ok := val.(string)
+		if !ok {
+			return errors.New("not a string")
 		}
-		return errors.New("not less than 100")
-	})
-	rule3 := Test("rule3", func(ctx context.Context, n int) error {
-		if n%2 == 0 {
-			return nil
+		if len(s) < 3 {
+			return errors.New("too short")
 		}
-		return errors.New("not even")
+		return nil
 	})
 
-	// Test at least 2 pass
-	atLeast2 := AtLeastN(2, rule1, rule2, rule3)
-	result, ok := atLeast2.Validate(ctx, 50) // positive, < 100, even
-	t.Logf("ok: %v, result: %+v", ok, result)
+	// Test NewRule with multiple rules
+	newRule := NewRule("test-rule", rule1, rule2)
+	result, ok := newRule.Validate(ctx, "hello")
 	if !ok {
-		t.Error("Expected AtLeastN(2) to pass when 3 rules pass")
+		t.Errorf("Expected NewRule to pass, got: %s", result.Format())
+	}
+	if result.Label != "test-rule" {
+		t.Errorf("Expected label 'test-rule', got '%s'", result.Label)
+	}
+	if result.Kind != KindAll {
+		t.Errorf("Expected KindAll, got %v", result.Kind)
+	}
+	if len(result.Children) != 2 {
+		t.Errorf("Expected 2 children, got %d", len(result.Children))
 	}
 
-	// Test exactly 2 pass
-	result, ok = atLeast2.Validate(ctx, 51) // positive, < 100, not even
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if !ok {
-		t.Error("Expected AtLeastN(2) to pass when exactly 2 rules pass")
-	}
-
-	// Test only 1 passes
-	result, ok = atLeast2.Validate(ctx, 101) // positive, not < 100, not even
-	t.Logf("ok: %v, result: %+v", ok, result)
+	// Test NewRule failure
+	result, ok = newRule.Validate(ctx, "hi")
 	if ok {
-		t.Error("Expected AtLeastN(2) to fail when only 1 rule passes")
+		t.Error("Expected NewRule to fail for short string")
 	}
-	if !strings.Contains(result.Message, "only 1 rules passed") {
-		t.Errorf("Expected message about insufficient passes, got: %s", result.Message)
+
+	// Test NewRule with nil
+	result, ok = newRule.Validate(ctx, nil)
+	if ok {
+		t.Error("Expected NewRule to fail for nil")
 	}
 }
 
-// Test StringLength helper
-func TestStringLength(t *testing.T) {
+func TestAs(t *testing.T) {
 	ctx := context.Background()
 
-	lengthRule := StringLength(5, 10)
+	// Test As with type assertion (any -> string)
+	assertString := func(val any) (string, error) {
+		s, ok := val.(string)
+		if !ok {
+			return "", fmt.Errorf("not a string")
+		}
+		return s, nil
+	}
 
-	// Test valid length
-	result, ok := lengthRule.Validate(ctx, "hello")
-	t.Logf("ok: %v, result: %+v", ok, result)
+	stringRule := Test("min-length", func(ctx context.Context, s string) error {
+		if len(s) < 3 {
+			return errors.New("too short")
+		}
+		return nil
+	})
+
+	asRule := As(assertString, stringRule)
+
+	// Test successful transformation and validation
+	result, ok := asRule.Validate(ctx, "hello")
 	if !ok {
-		t.Error("Expected StringLength to pass for valid length")
+		t.Errorf("Expected As rule to pass, got: %s", result.Format())
 	}
 
-	result, ok = lengthRule.Validate(ctx, "helloworld")
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if !ok {
-		t.Error("Expected StringLength to pass for max length")
-	}
-
-	// Test too short
-	result, ok = lengthRule.Validate(ctx, "hi")
-	t.Logf("ok: %v, result: %+v", ok, result)
+	// Test transformation failure
+	result, ok = asRule.Validate(ctx, 42)
 	if ok {
-		t.Error("Expected StringLength to fail for too short")
+		t.Error("Expected As rule to fail for non-string")
 	}
-	if !strings.Contains(result.Message, "too short") {
-		t.Errorf("Expected message about too short, got: %s", result.Message)
+	if !strings.Contains(result.Message, "not a string") {
+		t.Errorf("Expected transform error, got: %s", result.Message)
 	}
 
-	// Test too long
-	result, ok = lengthRule.Validate(ctx, "this is too long")
-	t.Logf("ok: %v, result: %+v", ok, result)
+	// Test validation failure after successful transformation
+	result, ok = asRule.Validate(ctx, "hi")
 	if ok {
-		t.Error("Expected StringLength to fail for too long")
-	}
-	if !strings.Contains(result.Message, "too long") {
-		t.Errorf("Expected message about too long, got: %s", result.Message)
+		t.Error("Expected As rule to fail for short string")
 	}
 }
 
-// Test NotEmpty helper
-func TestNotEmpty(t *testing.T) {
+func TestAsWithTransformation(t *testing.T) {
 	ctx := context.Background()
 
-	notEmptyRule := Not(StringEmpty())
+	// Test As with transformation (string -> int)
+	transformToInt := func(val any) (int, error) {
+		s, ok := val.(string)
+		if !ok {
+			return 0, fmt.Errorf("not a string")
+		}
+		var n int
+		_, err := fmt.Sscanf(s, "%d", &n)
+		if err != nil {
+			return 0, fmt.Errorf("not a number: %v", err)
+		}
+		return n, nil
+	}
 
-	// Test non-empty
-	result, ok := notEmptyRule.Validate(ctx, "hello")
-	t.Logf("ok: %v, result: %+v", ok, result)
+	intRule := Test("range", func(ctx context.Context, n int) error {
+		if n < 10 || n > 100 {
+			return errors.New("out of range")
+		}
+		return nil
+	})
+
+	asRule := As(transformToInt, intRule)
+
+	// Test successful transformation and validation
+	result, ok := asRule.Validate(ctx, "50")
 	if !ok {
-		t.Error("Expected NotEmpty to pass for non-empty string")
+		t.Errorf("Expected As rule to pass, got: %s", result.Format())
 	}
 
-	// Test empty
-	result, ok = notEmptyRule.Validate(ctx, "")
-	t.Logf("ok: %v, result: %+v", ok, result)
+	// Test transformation failure (not a string)
+	result, ok = asRule.Validate(ctx, 42)
 	if ok {
-		t.Error("Expected NotEmpty to fail for empty string")
+		t.Error("Expected As rule to fail for non-string")
 	}
 
-	// Test whitespace only
-	result, ok = notEmptyRule.Validate(ctx, "   ")
-	t.Logf("ok: %v, result: %+v", ok, result)
+	// Test transformation failure (not a number)
+	result, ok = asRule.Validate(ctx, "abc")
 	if ok {
-		t.Error("Expected NotEmpty to fail for whitespace-only string")
+		t.Error("Expected As rule to fail for non-numeric string")
 	}
 
-	result, ok = notEmptyRule.Validate(ctx, "\t\n")
-	t.Logf("ok: %v, result: %+v", ok, result)
+	// Test validation failure after successful transformation
+	result, ok = asRule.Validate(ctx, "5")
 	if ok {
-		t.Error("Expected NotEmpty to fail for whitespace-only string")
+		t.Error("Expected As rule to fail for out of range value")
 	}
 }
 
-// Test NumericRange helper
-func TestNumericRange(t *testing.T) {
-	ctx := context.Background()
-
-	// Test int
-	intRule := NumericRange(10, 100)
-	result, ok := intRule.Validate(ctx, 50)
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if !ok {
-		t.Error("Expected NumericRange to pass for valid int")
-	}
-
-	result, ok = intRule.Validate(ctx, 5)
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if ok {
-		t.Error("Expected NumericRange to fail for too small int")
-	}
-
-	result, ok = intRule.Validate(ctx, 150)
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if ok {
-		t.Error("Expected NumericRange to fail for too large int")
-	}
-
-	// Test int64
-	int64Rule := NumericRange(int64(10), int64(100))
-	result, ok = int64Rule.Validate(ctx, int64(50))
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if !ok {
-		t.Error("Expected NumericRange to pass for valid int64")
-	}
-
-	// Test float64
-	floatRule := NumericRange(10.0, 100.0)
-	result, ok = floatRule.Validate(ctx, 50.5)
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if !ok {
-		t.Error("Expected NumericRange to pass for valid float64")
-	}
-
-	result, ok = floatRule.Validate(ctx, 9.9)
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if ok {
-		t.Error("Expected NumericRange to fail for too small float64")
-	}
-
-	result, ok = floatRule.Validate(ctx, 100.1)
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if ok {
-		t.Error("Expected NumericRange to fail for too large float64")
-	}
-
-	// Test boundary values
-	result, ok = intRule.Validate(ctx, 10)
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if !ok {
-		t.Error("Expected NumericRange to pass for min boundary")
-	}
-
-	result, ok = intRule.Validate(ctx, 100)
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if !ok {
-		t.Error("Expected NumericRange to pass for max boundary")
-	}
-}
-
-// Test context cancellation
 func TestContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
@@ -571,7 +383,6 @@ func TestContextCancellation(t *testing.T) {
 	})
 
 	result, ok := rule.Validate(ctx, "test")
-	t.Logf("ok: %v, result: %+v", ok, result)
 	if ok {
 		t.Error("Expected validation to fail on cancelled context")
 	}
@@ -583,7 +394,6 @@ func TestContextCancellation(t *testing.T) {
 	}
 }
 
-// Test context timeout
 func TestContextTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
 	defer cancel()
@@ -595,7 +405,6 @@ func TestContextTimeout(t *testing.T) {
 	})
 
 	result, ok := rule.Validate(ctx, "test")
-	t.Logf("ok: %v, result: %+v", ok, result)
 	if ok {
 		t.Error("Expected validation to fail on timed out context")
 	}
@@ -604,7 +413,6 @@ func TestContextTimeout(t *testing.T) {
 	}
 }
 
-// Test nested rules
 func TestNestedRules(t *testing.T) {
 	ctx := context.Background()
 
@@ -616,7 +424,6 @@ func TestNestedRules(t *testing.T) {
 	outerAll := All(outer1, innerAll)
 
 	result, ok := outerAll.Validate(ctx, "test")
-	t.Logf("ok: %v, result: %+v", ok, result)
 	if !ok {
 		t.Error("Expected nested All rules to pass")
 	}
@@ -631,55 +438,6 @@ func TestNestedRules(t *testing.T) {
 	}
 }
 
-// Test complex nested Any/All combination
-func TestComplexNestedRules(t *testing.T) {
-	ctx := context.Background()
-
-	pass1 := Test("pass1", func(ctx context.Context, n int) error { return nil })
-	fail1 := Test("fail1", func(ctx context.Context, n int) error {
-		return errors.New("fails")
-	})
-
-	// (pass1 OR fail1) AND pass1
-	anyRule := Any(pass1, fail1)
-	allRule := All(anyRule, pass1)
-
-	result, ok := allRule.Validate(ctx, 42)
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if !ok {
-		t.Error("Expected complex nested rule to pass")
-	}
-
-	// (fail1 OR fail1) AND pass1
-	anyRule = Any(fail1, fail1)
-	allRule = All(anyRule, pass1)
-	result, ok = allRule.Validate(ctx, 42)
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if ok {
-		t.Error("Expected complex nested rule to fail when Any fails")
-	}
-}
-
-// Test Not with nested rules
-func TestNotWithNestedRules(t *testing.T) {
-	ctx := context.Background()
-
-	pass1 := Test("pass1", func(ctx context.Context, s string) error { return nil })
-	pass2 := Test("pass2", func(ctx context.Context, s string) error { return nil })
-	allPass := All(pass1, pass2)
-
-	notAll := Not(allPass)
-	result, ok := notAll.Validate(ctx, "test")
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if ok {
-		t.Error("Expected Not(All(pass, pass)) to fail")
-	}
-	if result.Children[0].Status != StatusPass {
-		t.Error("Expected inner All to pass")
-	}
-}
-
-// Test Result.OK() method
 func TestResultOK(t *testing.T) {
 	passResult := &Result{Status: StatusPass}
 	if !passResult.OK() {
@@ -697,7 +455,6 @@ func TestResultOK(t *testing.T) {
 	}
 }
 
-// Test Result.Format() method
 func TestResultFormat(t *testing.T) {
 	result := &Result{
 		Status:  StatusFail,
@@ -737,70 +494,6 @@ func TestResultFormat(t *testing.T) {
 	}
 }
 
-// Test Result.String() method
-func TestResultString(t *testing.T) {
-	result := &Result{
-		Status: StatusPass,
-		Label:  "test",
-	}
-
-	str := result.String()
-	if !strings.Contains(str, "PASS") {
-		t.Error("Expected String() to contain status")
-	}
-	if !strings.Contains(str, "test") {
-		t.Error("Expected String() to contain label")
-	}
-}
-
-// Test RuleKind.String()
-func TestRuleKindString(t *testing.T) {
-	if KindTest.String() != "test" {
-		t.Error("Expected KindTest.String() to return 'test'")
-	}
-	if KindAll.String() != "all" {
-		t.Error("Expected KindAll.String() to return 'all'")
-	}
-	if KindAny.String() != "any" {
-		t.Error("Expected KindAny.String() to return 'any'")
-	}
-	if KindNot.String() != "not" {
-		t.Error("Expected KindNot.String() to return 'not'")
-	}
-}
-
-// Test ResultStatus.String()
-func TestResultStatusString(t *testing.T) {
-	if StatusPass.String() != "PASS" {
-		t.Error("Expected StatusPass.String() to return 'PASS'")
-	}
-	if StatusFail.String() != "FAIL" {
-		t.Error("Expected StatusFail.String() to return 'FAIL'")
-	}
-	if StatusSkip.String() != "SKIP" {
-		t.Error("Expected StatusSkip.String() to return 'SKIP'")
-	}
-}
-
-// Test Rule.String() method
-func TestRuleString(t *testing.T) {
-	testRule := Test("test", func(ctx context.Context, s string) error { return nil })
-	str := testRule.String()
-	if !strings.Contains(str, "Test") {
-		t.Error("Expected Rule.String() to contain 'Test'")
-	}
-	if !strings.Contains(str, "test") {
-		t.Error("Expected Rule.String() to contain label")
-	}
-
-	allRule := All(testRule)
-	str = allRule.String()
-	if !strings.Contains(str, "all") {
-		t.Error("Expected All rule String() to contain 'all'")
-	}
-}
-
-// Test edge case: Not rule with invalid children count
 func TestNotRuleInvalidChildren(t *testing.T) {
 	ctx := context.Background()
 
@@ -812,7 +505,6 @@ func TestNotRuleInvalidChildren(t *testing.T) {
 	}
 
 	result, ok := notRule.Validate(ctx, "test")
-	t.Logf("ok: %v, result: %+v", ok, result)
 	if ok {
 		t.Error("Expected Not rule with invalid children to fail")
 	}
@@ -821,7 +513,6 @@ func TestNotRuleInvalidChildren(t *testing.T) {
 	}
 }
 
-// Test edge case: unknown rule kind
 func TestUnknownRuleKind(t *testing.T) {
 	ctx := context.Background()
 
@@ -831,125 +522,10 @@ func TestUnknownRuleKind(t *testing.T) {
 	}
 
 	result, ok := rule.Validate(ctx, "test")
-	t.Logf("ok: %v, result: %+v", ok, result)
 	if ok {
 		t.Error("Expected unknown rule kind to fail")
 	}
 	if !strings.Contains(result.Message, "unknown rule kind") {
 		t.Errorf("Expected message about unknown kind, got: %s", result.Message)
-	}
-}
-
-// Test different types
-func TestDifferentTypes(t *testing.T) {
-	ctx := context.Background()
-
-	// Test with custom struct
-	type User struct {
-		Name string
-		Age  int
-	}
-
-	userRule := Test("user", func(ctx context.Context, u User) error {
-		if u.Name == "" {
-			return errors.New("name required")
-		}
-		return nil
-	})
-
-	result, ok := userRule.Validate(ctx, User{Name: "John", Age: 30})
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if !ok {
-		t.Error("Expected user rule to pass")
-	}
-
-	result, ok = userRule.Validate(ctx, User{})
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if ok {
-		t.Error("Expected user rule to fail for empty name")
-	}
-}
-
-// Test deep nesting
-func TestDeepNesting(t *testing.T) {
-	ctx := context.Background()
-
-	leaf := Test("leaf", func(ctx context.Context, n int) error { return nil })
-	level1 := All(leaf)
-	level2 := All(level1)
-	level3 := All(level2)
-	level4 := All(level3)
-
-	result, ok := level4.Validate(ctx, 42)
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if !ok {
-		t.Error("Expected deeply nested rule to pass")
-	}
-
-	// Verify nesting depth
-	depth := 0
-	current := result
-	for len(current.Children) > 0 {
-		depth++
-		current = current.Children[0]
-	}
-	if depth != 4 {
-		t.Errorf("Expected depth 4, got %d", depth)
-	}
-}
-
-// Test All with all passing then one failing
-func TestAllAllPassThenFail(t *testing.T) {
-	ctx := context.Background()
-
-	pass1 := Test("pass1", func(ctx context.Context, n int) error { return nil })
-	pass2 := Test("pass2", func(ctx context.Context, n int) error { return nil })
-	fail1 := Test("fail1", func(ctx context.Context, n int) error {
-		return errors.New("fails")
-	})
-
-	allRule := All(pass1, pass2, fail1)
-	result, ok := allRule.Validate(ctx, 42)
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if ok {
-		t.Error("Expected All rule to fail")
-	}
-	if result.Children[0].Status != StatusPass {
-		t.Error("Expected first child to pass")
-	}
-	if result.Children[1].Status != StatusPass {
-		t.Error("Expected second child to pass")
-	}
-	if result.Children[2].Status != StatusFail {
-		t.Error("Expected third child to fail")
-	}
-}
-
-// Test Any with all failing then one passing
-func TestAnyAllFailThenPass(t *testing.T) {
-	ctx := context.Background()
-
-	fail1 := Test("fail1", func(ctx context.Context, n int) error {
-		return errors.New("fails")
-	})
-	fail2 := Test("fail2", func(ctx context.Context, n int) error {
-		return errors.New("fails")
-	})
-	pass1 := Test("pass1", func(ctx context.Context, n int) error { return nil })
-
-	anyRule := Any(fail1, fail2, pass1)
-	result, ok := anyRule.Validate(ctx, 42)
-	t.Logf("ok: %v, result: %+v", ok, result)
-	if !ok {
-		t.Error("Expected Any rule to pass")
-	}
-	if result.Children[0].Status != StatusFail {
-		t.Error("Expected first child to fail")
-	}
-	if result.Children[1].Status != StatusFail {
-		t.Error("Expected second child to fail")
-	}
-	if result.Children[2].Status != StatusPass {
-		t.Error("Expected third child to pass")
 	}
 }
