@@ -45,13 +45,23 @@ clean:
 
 # Publish: tag version and push (requires VERSION variable)
 publish: test
-	@if [ -z "$(VERSION)" ] || [ "$(VERSION)" = "dev" ]; then \
-		echo "Error: VERSION must be set (e.g., make publish VERSION=v1.0.0)"; \
+	@AUTO_VERSION=$$(git describe --tags --always --dirty 2>/dev/null || echo "dev"); \
+	if [ -z "$(VERSION)" ] || [ "$(VERSION)" = "dev" ] || [ "$(VERSION)" = "$$AUTO_VERSION" ] || echo "$(VERSION)" | grep -q "dirty"; then \
+		echo "Error: VERSION must be explicitly set (e.g., make publish VERSION=v1.0.0)"; \
+		echo "       Auto-generated versions are not allowed for publishing."; \
 		exit 1; \
 	fi
 	@echo "Publishing version $(VERSION)..."
-	@git tag -a $(VERSION) -m "Release $(VERSION)" || true
-	@git push origin $(VERSION) || true
+	@if git rev-parse "$(VERSION)" >/dev/null 2>&1; then \
+		echo "Warning: Tag $(VERSION) already exists locally"; \
+		if git ls-remote --tags origin | grep -q "refs/tags/$(VERSION)$$"; then \
+			echo "Error: Tag $(VERSION) already exists on remote"; \
+			exit 1; \
+		fi; \
+	else \
+		git tag -a $(VERSION) -m "Release $(VERSION)"; \
+	fi
+	@git push origin $(VERSION)
 	@GOPROXY=proxy.golang.org go list -m $(MODULE_PATH)@$(VERSION) || echo "Note: Module will be available after proxy sync"
 
 # Help target
