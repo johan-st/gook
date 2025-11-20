@@ -1,4 +1,4 @@
-package go_ok
+package gook
 
 import (
 	"context"
@@ -32,14 +32,19 @@ func TestThen(t *testing.T) {
 		return n, nil
 	}
 
-	secondRule := NumericRange(10, 100)
+	secondRule := Test("range", func(ctx context.Context, n int) error {
+		if n < 10 || n > 100 {
+			return errors.New("out of range")
+		}
+		return nil
+	})
 
 	pipeline := Then(firstRule, transform, secondRule)
 
 	// Test successful validation
 	result, ok := pipeline.Validate(ctx, "50")
 	if !ok {
-		t.Errorf("Expected validation to pass, got: %s", result.Format())
+		t.Errorf("Expected validation to pass, got:\n%s", result.Format())
 	}
 	if result.Status != StatusPass {
 		t.Error("Expected StatusPass")
@@ -152,83 +157,6 @@ func TestThenWithTimeout(t *testing.T) {
 	}
 }
 
-func TestChainThen(t *testing.T) {
-	ctx := context.Background()
-
-	// First pipeline: string -> int
-	firstRule := Test("not-empty", func(ctx context.Context, s string) error {
-		if s == "" {
-			return errors.New("empty")
-		}
-		return nil
-	})
-	transform1 := func(s string) (int, error) {
-		var n int
-		_, err := fmt.Sscanf(s, "%d", &n)
-		return n, err
-	}
-	secondRule := NumericRange(10, 100)
-	pipeline1 := Then(firstRule, transform1, secondRule)
-
-	// Chain: int -> string
-	transform2 := func(n int) (string, error) {
-		return fmt.Sprintf("%d", n), nil
-	}
-	thirdRule := Test("length", func(ctx context.Context, s string) error {
-		if len(s) < 2 {
-			return errors.New("too short")
-		}
-		return nil
-	})
-
-	pipeline2 := ChainThen(pipeline1, transform2, thirdRule)
-
-	// Test successful chain
-	result, ok := pipeline2.Validate(ctx, "50")
-	if !ok {
-		t.Errorf("Expected validation to pass, got: %s", result.Format())
-	}
-	if result.Status != StatusPass {
-		t.Error("Expected StatusPass")
-	}
-
-	// Test failure in first pipeline
-	_, ok = pipeline2.Validate(ctx, "5")
-	if ok {
-		t.Error("Expected validation to fail for value out of range")
-	}
-
-	// Test failure in second pipeline
-	_, ok = pipeline2.Validate(ctx, "1")
-	if ok {
-		t.Error("Expected validation to fail for single digit")
-	}
-}
-
-func TestThenString(t *testing.T) {
-	firstRule := Test("first", func(ctx context.Context, s string) error {
-		return nil
-	})
-	transform := func(s string) (int, error) {
-		return 0, nil
-	}
-	secondRule := Test("second", func(ctx context.Context, n int) error {
-		return nil
-	})
-
-	pipeline := Then(firstRule, transform, secondRule)
-	str := pipeline.String()
-	if !strings.Contains(str, "ThenRule") {
-		t.Errorf("Expected String to contain 'ThenRule', got '%s'", str)
-	}
-	if !strings.Contains(str, "first") {
-		t.Errorf("Expected String to contain first rule label, got '%s'", str)
-	}
-	if !strings.Contains(str, "second") {
-		t.Errorf("Expected String to contain second rule label, got '%s'", str)
-	}
-}
-
 func TestThenWithComplexRules(t *testing.T) {
 	ctx := context.Background()
 
@@ -260,7 +188,12 @@ func TestThenWithComplexRules(t *testing.T) {
 	}
 
 	secondRule := All(
-		NumericRange(10, 100),
+		Test("range", func(ctx context.Context, n int) error {
+			if n < 10 || n > 100 {
+				return errors.New("out of range")
+			}
+			return nil
+		}),
 		Test("not-13", func(ctx context.Context, n int) error {
 			if n == 13 {
 				return errors.New("unlucky number")
@@ -295,4 +228,3 @@ func TestThenWithComplexRules(t *testing.T) {
 		t.Error("Expected validation to fail for unlucky number")
 	}
 }
-

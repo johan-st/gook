@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	ok "go_ok"
+	ok "gook"
 )
 
 func Numeric(testString any) {
@@ -23,10 +23,20 @@ func Numeric(testString any) {
 			return n, nil
 		},
 		ok.All(
-			ok.NumericRange(10, 100),
-			ok.Not(ok.NumericRange(13,13)),
+			ok.Test("range", func(ctx context.Context, n int) error {
+				if n < 10 || n > 100 {
+					return fmt.Errorf("value must be between 10 and 100")
+				}
+				return nil
+			}),
+			ok.Not(ok.Test("not-13", func(ctx context.Context, n int) error {
+				if n == 13 {
+					return nil
+				}
+				return fmt.Errorf("value is not 13")
+			})),
 		))
 	result, ok := pipeline.Validate(ctx, testString)
-	fmt.Printf("valid: %v, result: %+v\n", ok, result)
+	fmt.Printf("valid: %v\n", ok)
 	fmt.Println(result.Format())
 }

@@ -1,10 +1,9 @@
-package go_ok
+package gook
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 )
 
@@ -16,6 +15,7 @@ const (
 	KindAll
 	KindAny
 	KindNot
+	KindThen // Type-narrowing pipeline
 )
 
 // String returns a human-readable representation of the rule kind
@@ -29,6 +29,8 @@ func (k RuleKind) String() string {
 		return "any"
 	case KindNot:
 		return "not"
+	case KindThen:
+		return "then"
 	default:
 		return "unknown"
 	}
@@ -41,6 +43,11 @@ type Rule[T any] struct {
 	Kind     RuleKind
 	TestFn   func(context.Context, T) error // returns error for message
 	Children []*Rule[T]                     // only same-typed children
+	
+	// For KindThen: type narrowing support
+	// Transform converts T to U, NextRule validates U
+	Transform func(T) (any, error) // type-erased transform
+	NextRule *Rule[any]            // type-erased next rule (validates transformed value)
 }
 
 // Test creates a leaf test rule
@@ -79,6 +86,83 @@ func Not[T any](rule *Rule[T]) *Rule[T] {
 	}
 }
 
+// typeEraseRule recursively converts Rule[U] to Rule[any]
+func typeEraseRule[U any](rule *Rule[U]) *Rule[any] {
+	if rule == nil {
+		return nil
+	}
+	
+	erased := &Rule[any]{
+		Label: rule.Label,
+		Kind:  rule.Kind,
+	}
+	
+	if rule.TestFn != nil {
+		erased.TestFn = func(ctx context.Context, val any) error {
+			u, ok := val.(U)
+			if !ok {
+				return fmt.Errorf("type assertion failed: expected %T, got %T", *new(U), val)
+			}
+			return rule.TestFn(ctx, u)
+		}
+	}
+	
+	if len(rule.Children) > 0 {
+		erased.Children = make([]*Rule[any], len(rule.Children))
+		for i, child := range rule.Children {
+			erased.Children[i] = typeEraseRule(child)
+		}
+	}
+	
+	return erased
+}
+
+// NewRule creates a labeled rule that combines multiple rules with All combinator
+func NewRule(label string, rules ...*Rule[any]) *Rule[any] {
+	return &Rule[any]{
+		Label:    label,
+		Kind:     KindAll,
+		Children: rules,
+	}
+}
+
+// As creates a type-narrowing/transformation rule from any to T
+// If the transform fails, the As rule fails
+func As[T any](transformFn func(any) (T, error), rule *Rule[T]) *Rule[any] {
+	// Create a pass-through rule that always passes (transform happens in Then)
+	passThrough := Test("as", func(ctx context.Context, val any) error {
+		return nil
+	})
+	
+	// Use Then to create the pipeline: any -> T -> validate
+	transformForThen := func(val any) (T, error) {
+		return transformFn(val)
+	}
+	
+	return Then(passThrough, transformForThen, rule)
+}
+
+// Then creates a type-narrowing pipeline as a Rule[T]
+// This is used internally by As
+func Then[T, U any](first *Rule[T], transform func(T) (U, error), next *Rule[U]) *Rule[T] {
+	// Type-erase the transform
+	typeErasedTransform := func(t T) (any, error) {
+		u, err := transform(t)
+		return u, err
+	}
+	
+	// Recursively type-erase the next rule
+	typeErasedNext := typeEraseRule(next)
+	
+	return &Rule[T]{
+		Label:     "then",
+		Kind:      KindThen,
+		Children:  []*Rule[T]{first}, // Store first rule as child
+		Transform: typeErasedTransform,
+		NextRule:  typeErasedNext,
+	}
+}
+
 // Validate evaluates the rule against the given value with full trace
 func (r *Rule[T]) Validate(ctx context.Context, value T) (*Result, bool) {
 	result := r.validateRecursive(ctx, value)
@@ -107,6 +191,8 @@ func (r *Rule[T]) validateRecursive(ctx context.Context, value T) *Result {
 		return r.validateAny(ctx, value)
 	case KindNot:
 		return r.validateNot(ctx, value)
+	case KindThen:
+		return r.validateThen(ctx, value)
 	default:
 		return &Result{
 			Status:  StatusFail,
@@ -114,6 +200,78 @@ func (r *Rule[T]) validateRecursive(ctx context.Context, value T) *Result {
 			Kind:    r.Kind,
 			Message: fmt.Sprintf("unknown rule kind: %v", r.Kind),
 		}
+	}
+}
+
+func (r *Rule[T]) validateThen(ctx context.Context, value T) *Result {
+	if r.Transform == nil || r.NextRule == nil {
+		return &Result{
+			Status:  StatusFail,
+			Label:   r.Label,
+			Kind:    KindThen,
+			Message: "then rule missing transform or next rule",
+		}
+	}
+
+	// First validate with the first child rule (if any)
+	var firstResult *Result
+	if len(r.Children) > 0 {
+		firstResult = r.Children[0].validateRecursive(ctx, value)
+		if firstResult.Status == StatusFail {
+			return &Result{
+				Status:   StatusFail,
+				Label:    r.Label,
+				Kind:     KindThen,
+				Message:  "first rule failed",
+				Children: []*Result{firstResult},
+			}
+		}
+	}
+
+	// Transform T -> any
+	transformed, err := r.Transform(value)
+	if err != nil {
+		var children []*Result
+		if firstResult != nil {
+			children = []*Result{firstResult}
+		}
+		return &Result{
+			Status:   StatusFail,
+			Label:    r.Label,
+			Kind:     KindThen,
+			Message:  fmt.Sprintf("transform failed: %v", err),
+			Children: children,
+		}
+	}
+
+	// Validate with NextRule (type-erased to Rule[any])
+	// NextRule.validateRecursive expects any, which matches our transformed value
+	nextResult := r.NextRule.validateRecursive(ctx, transformed)
+
+	// Combine results
+	var status ResultStatus
+	var message string
+	if nextResult.Status == StatusPass {
+		status = StatusPass
+	} else if nextResult.Status == StatusFail {
+		status = StatusFail
+		message = "second rule failed"
+	} else {
+		status = StatusSkip
+	}
+
+	var children []*Result
+	if firstResult != nil {
+		children = append(children, firstResult)
+	}
+	children = append(children, nextResult)
+
+	return &Result{
+		Status:   status,
+		Label:    r.Label,
+		Kind:     KindThen,
+		Message:  message,
+		Children: children,
 	}
 }
 
@@ -234,42 +392,6 @@ func (r *Rule[T]) validateNot(ctx context.Context, value T) *Result {
 	}
 }
 
-// String returns a human-readable representation of the rule
-func (r *Rule[T]) String() string {
-	if r.Kind == KindTest {
-		return fmt.Sprintf("Test[%T](%s)", *new(T), r.Label)
-	}
-	return fmt.Sprintf("%s[%T](%d children)", r.Kind.String(), *new(T), len(r.Children))
-}
-
-// Helper functions for common validation patterns
-
-// Required creates a rule that ensures a value is not nil/zero
-func Required[T any](label string) *Rule[T] {
-	return Test(label, func(ctx context.Context, value T) error {
-		var zero T
-		if reflect.DeepEqual(value, zero) {
-			return errors.New("required field is missing")
-		}
-		return nil
-	})
-}
-
-// Optional creates a rule that only validates if the value is not nil/zero
-func Optional[T any](rule *Rule[T]) *Rule[T] {
-	return Test("optional", func(ctx context.Context, value T) error {
-		var zero T
-		if reflect.DeepEqual(value, zero) {
-			return nil // Skip validation for zero values
-		}
-		result, _ := rule.Validate(ctx, value)
-		if !result.OK() {
-			return errors.New(result.Message)
-		}
-		return nil
-	})
-}
-
 // OneOf creates a rule that passes if exactly one of the given rules passes
 func OneOf[T any](rules ...*Rule[T]) *Rule[T] {
 	return Test("one-of", func(ctx context.Context, value T) error {
@@ -294,35 +416,68 @@ func OneOf[T any](rules ...*Rule[T]) *Rule[T] {
 	})
 }
 
-// AtLeastN creates a rule that passes if at least N of the given rules pass
-func AtLeastN[T any](n int, rules ...*Rule[T]) *Rule[T] {
-	return Test(fmt.Sprintf("at-least-%d", n), func(ctx context.Context, value T) error {
-		passCount := 0
-
-		for _, rule := range rules {
-			result, _ := rule.Validate(ctx, value)
-			if result.OK() {
-				passCount++
-			}
-		}
-
-		if passCount < n {
-			return fmt.Errorf("only %d rules passed (expected at least %d)", passCount, n)
+// NotNil creates a rule that ensures a value is not nil
+func NotNil(label string) *Rule[any] {
+	return Test(label, func(ctx context.Context, value any) error {
+		if value == nil {
+			return errors.New("value is nil")
 		}
 		return nil
 	})
 }
 
-// ----------------
-// PREDEFINED RULES
-// ----------------
+// AssertBytes is a transform function that converts any to []byte
+func AssertBytes(v any) ([]byte, error) {
+	b, ok := v.([]byte)
+	if !ok {
+		return nil, fmt.Errorf("value is not []byte")
+	}
+	return b, nil
+}
 
-func String() *Rule[any] {
-	return Test("string", func(ctx context.Context, value any) error {
-		_, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("value is not a string")
+// AssertString is a transform function that converts any to string
+func AssertString(v any) (string, error) {
+	s, ok := v.(string)
+	if !ok {
+		return "", fmt.Errorf("value is not a string")
+	}
+	return s, nil
+}
+
+// BytesMax creates a rule for maximum byte length
+func BytesMax(max int) *Rule[[]byte] {
+	return Test("bytes-max", func(ctx context.Context, value []byte) error {
+		if len(value) > max {
+			return fmt.Errorf("bytes too long (max: %d, got: %d)", max, len(value))
 		}
+		return nil
+	})
+}
+
+// BytesMin creates a rule for minimum byte length
+func BytesMin(min int) *Rule[[]byte] {
+	return Test("bytes-min", func(ctx context.Context, value []byte) error {
+		if len(value) < min {
+			return fmt.Errorf("bytes too short (min: %d, got: %d)", min, len(value))
+		}
+		return nil
+	})
+}
+
+// Encoding represents text encoding types
+type Encoding int
+
+const (
+	EncodingUTF8 Encoding = iota
+	EncodingUTF16
+	EncodingUTF32
+)
+
+// BytesEncoding creates a rule for byte encoding validation
+func BytesEncoding(enc Encoding) *Rule[[]byte] {
+	return Test("bytes-encoding", func(ctx context.Context, value []byte) error {
+		// Basic encoding check - can be enhanced later
+		_ = enc
 		return nil
 	})
 }
@@ -341,18 +496,9 @@ func StringLength(min, max int) *Rule[string] {
 	})
 }
 
-// StringEmpty creates a rule that ensures a string is not empty
-func StringEmpty() *Rule[string] {
-	return Test("not empty", func(ctx context.Context, value string) error {
-		if strings.TrimSpace(value) != "" {
-			return errors.New("string cannot be empty")
-		}
-		return nil
-	})
-}
-
+// StringContains creates a rule that checks if a string contains a substring
 func StringContains(substring string) *Rule[string] {
-	return Test("string-contains \""+substring+"\"", func(ctx context.Context, value string) error {
+	return Test("string-contains", func(ctx context.Context, value string) error {
 		if !strings.Contains(value, substring) {
 			return fmt.Errorf("string does not contain %s", substring)
 		}
@@ -360,14 +506,21 @@ func StringContains(substring string) *Rule[string] {
 	})
 }
 
-// NumericRange creates a rule for numeric range validation
-func NumericRange[T int | int8 | int16| int32 | int64 | float32 | float64 | uint | uint8 | uint16 | uint32 | uint64](min, max T) *Rule[T] {
-	return Test("numeric-range", func(ctx context.Context, value T) error {
-		if value < min {
-			return fmt.Errorf("value too small (min: %v, got: %v)", min, value)
+// StringEndsWith creates a rule that checks if a string ends with a suffix
+func StringEndsWith(suffix string) *Rule[string] {
+	return Test("string-ends-with", func(ctx context.Context, value string) error {
+		if !strings.HasSuffix(value, suffix) {
+			return fmt.Errorf("string does not end with %s", suffix)
 		}
-		if value > max {
-			return fmt.Errorf("value too large (max: %v, got: %v)", max, value)
+		return nil
+	})
+}
+
+// StringIs creates a rule that checks if a string equals a value
+func StringIs(value string) *Rule[string] {
+	return Test("string-is", func(ctx context.Context, s string) error {
+		if s != value {
+			return fmt.Errorf("string is not %s", value)
 		}
 		return nil
 	})

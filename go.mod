@@ -1,3 +1,3 @@
-module go_ok
+module gook
 
 go 1.23.3
