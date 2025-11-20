@@ -2,8 +2,9 @@ package main
 
 import (
 	"flag"
-	"gook/examples"
 	"strings"
+
+	"github.com/johan-st/gook/examples"
 )
 
 func main() {

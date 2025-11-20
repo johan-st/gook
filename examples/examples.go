@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	ok "gook"
 	"strings"
+
+	ok "github.com/johan-st/gook"
 )
 
 // RunBasicExamples demonstrates basic validation features

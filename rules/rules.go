@@ -11,7 +11,7 @@ import (
 	"regexp"
 	"strings"
 
-	"gook"
+	"github.com/johan-st/gook"
 )
 
 // Email creates a rule that validates RFC 5322 compliant email addresses

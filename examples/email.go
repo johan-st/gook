@@ -3,8 +3,9 @@ package examples
 import (
 	"context"
 	"fmt"
-	ok "gook"
 	"strings"
+
+	ok "github.com/johan-st/gook"
 )
 
 func Email(testString string) {

@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	ok "gook"
+
+	ok "github.com/johan-st/gook"
 )
 
 func Numeric(testString any) {
